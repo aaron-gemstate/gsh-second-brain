@@ -34,6 +34,7 @@ export class PaperclipClient {
     slackChannelId: string;
     githubIssueNumber?: number;
     githubIssueUrl?: string;
+    triageAgentId?: string;
   }): Promise<PaperclipIssue> {
     const description = [
       params.body,
@@ -44,7 +45,9 @@ export class PaperclipClient {
       params.githubIssueUrl
         ? `**GitHub issue:** [#${params.githubIssueNumber}](${params.githubIssueUrl})`
         : "",
-      // Machine-readable marker used to retrieve the GitHub issue on edits/deletions
+      // Machine-readable markers for the Triage Agent and future lookups
+      `<!-- slack-channel-id:${params.slackChannelId} -->`,
+      `<!-- slack-message-ts:${params.slackMessageTs} -->`,
       params.githubIssueNumber != null
         ? `<!-- github-issue:${params.githubIssueNumber} -->`
         : "",
@@ -61,6 +64,7 @@ export class PaperclipClient {
       originKind: "slack",
       originId: params.slackMessageTs,
       originFingerprint: `slack:${params.slackChannelId}:${params.slackMessageTs}`,
+      ...(params.triageAgentId ? { assigneeAgentId: params.triageAgentId } : {}),
     });
 
     return response.data as PaperclipIssue;

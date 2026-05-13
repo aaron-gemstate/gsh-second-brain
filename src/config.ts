@@ -21,6 +21,7 @@ export const config = {
     projectId: required("PAPERCLIP_PROJECT_ID"),
     companyPrefix: process.env["PAPERCLIP_COMPANY_PREFIX"] ?? "GEM",
     appBaseUrl: process.env["APP_BASE_URL"] ?? "https://paperclip.ing",
+    triageAgentId: process.env["PAPERCLIP_TRIAGE_AGENT_ID"],
   },
   github: {
     token: required("GITHUB_TOKEN"),

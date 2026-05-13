@@ -42,6 +42,7 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
         slackChannelId: msg.channel,
         githubIssueNumber: ghIssue?.number,
         githubIssueUrl: ghIssue?.url,
+        triageAgentId: config.paperclip.triageAgentId,
       });
 
       const issueUrl = `${config.paperclip.appBaseUrl}${paperclip.issueUrl(config.paperclip.companyPrefix, issue.identifier)}`;
