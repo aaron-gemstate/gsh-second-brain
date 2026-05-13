@@ -1,13 +1,13 @@
 import { App, GenericMessageEvent } from "@slack/bolt";
 import { config } from "./config";
 import { PaperclipClient } from "./paperclip";
+import { GitHubClient } from "./github";
 
-export function registerIngestHandlers(app: App, paperclip: PaperclipClient): void {
-  // New message in #second-brain → create Paperclip issue
+export function registerIngestHandlers(app: App, paperclip: PaperclipClient, github: GitHubClient): void {
+  // New message in #second-brain → log to GitHub, then create Paperclip issue
   app.message(async ({ message, client, logger }) => {
     const msg = message as GenericMessageEvent;
 
-    // Only process messages from the configured channel (bot is always filtered to it at the App level)
     if (msg.channel !== config.slack.secondBrainChannelId) return;
     // Ignore bot messages and thread replies
     if (msg.subtype || msg.thread_ts) return;
@@ -20,6 +20,18 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient): vo
 
     logger.info(`Capturing idea from ${msg.user}: "${title}"`);
 
+    let ghIssue: { number: number; url: string } | null = null;
+
+    // Step 1: Log to GitHub second-brain database
+    try {
+      const ghBody = buildGitHubBody({ text, submitterUserId: msg.user, slackMessageLink: permalink });
+      ghIssue = await github.createIssue({ title, body: ghBody });
+      logger.info(`GitHub issue created: #${ghIssue.number} ${ghIssue.url}`);
+    } catch (err) {
+      logger.error("Failed to create GitHub issue — will still create Paperclip issue", err);
+    }
+
+    // Step 2: Create Paperclip issue (with GitHub link if available)
     try {
       const issue = await paperclip.createIdeaIssue({
         title,
@@ -28,14 +40,19 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient): vo
         slackMessageLink: permalink,
         slackMessageTs: msg.ts,
         slackChannelId: msg.channel,
+        githubIssueNumber: ghIssue?.number,
+        githubIssueUrl: ghIssue?.url,
       });
 
       const issueUrl = `${config.paperclip.appBaseUrl}${paperclip.issueUrl(config.paperclip.companyPrefix, issue.identifier)}`;
 
+      const replyParts = [`Captured — triaging now (<${issueUrl}|${issue.identifier}>)`];
+      if (ghIssue) replyParts.push(`GitHub: <${ghIssue.url}|#${ghIssue.number}>`);
+
       await client.chat.postMessage({
         channel: msg.channel,
         thread_ts: msg.ts,
-        text: `Captured — triaging now (<${issueUrl}|${issue.identifier}>)`,
+        text: replyParts.join(" · "),
       });
     } catch (err) {
       logger.error("Failed to create Paperclip issue", err);
@@ -47,21 +64,26 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient): vo
     }
   });
 
-  // Message deleted → cancel the corresponding Paperclip issue
+  // Message deleted → close GitHub issue + cancel Paperclip issue
   app.event("message", async ({ event, logger }) => {
     const ev = event as unknown as { subtype?: string; deleted_ts?: string; channel?: string };
     if (ev.subtype !== "message_deleted" || !ev.deleted_ts || !ev.channel) return;
     if (ev.channel !== config.slack.secondBrainChannelId) return;
 
-    logger.info(`Message deleted: ${ev.deleted_ts} — cancelling Paperclip issue`);
+    logger.info(`Message deleted: ${ev.deleted_ts} — closing GitHub issue and cancelling Paperclip issue`);
+
+    const reason = "Slack message was deleted by submitter";
     try {
-      await paperclip.closeIssueByOrigin(ev.deleted_ts, ev.channel, "Slack message was deleted by submitter");
+      const { githubIssueNumber } = await paperclip.closeIssueByOrigin(ev.deleted_ts, ev.channel, reason);
+      if (githubIssueNumber != null) {
+        await github.closeIssue(githubIssueNumber, reason);
+      }
     } catch (err) {
-      logger.error("Failed to cancel Paperclip issue on delete", err);
+      logger.error("Failed to close issues on Slack message delete", err);
     }
   });
 
-  // Message edited → update title/description on the Paperclip issue
+  // Message edited → update GitHub issue + Paperclip issue
   app.event("message", async ({ event, logger }) => {
     const ev = event as unknown as {
       subtype?: string;
@@ -74,19 +96,47 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient): vo
     const text = ev.message.text ?? "";
     if (!text.trim()) return;
 
-    logger.info(`Message edited: ${ev.message.ts} — updating Paperclip issue`);
+    logger.info(`Message edited: ${ev.message.ts} — updating GitHub issue and Paperclip issue`);
+
+    const newTitle = deriveTitle(text);
     try {
-      await paperclip.updateIssueTitleByOrigin(ev.message.ts, ev.channel, deriveTitle(text), text);
+      const { githubIssueNumber } = await paperclip.updateIssueTitleByOrigin(
+        ev.message.ts,
+        ev.channel,
+        newTitle,
+        text
+      );
+      if (githubIssueNumber != null) {
+        await github.updateIssue(githubIssueNumber, { title: newTitle, body: text });
+      }
     } catch (err) {
-      logger.error("Failed to update Paperclip issue on edit", err);
+      logger.error("Failed to update issues on Slack message edit", err);
     }
   });
 }
 
 function deriveTitle(text: string): string {
-  // Use the first sentence or first 80 characters as the title
   const firstSentence = text.split(/[.!?\n]/)[0]?.trim() ?? text;
   return firstSentence.length > 80 ? firstSentence.slice(0, 77) + "…" : firstSentence;
+}
+
+function buildGitHubBody(params: {
+  text: string;
+  submitterUserId?: string;
+  slackMessageLink: string;
+}): string {
+  return [
+    "## Idea",
+    "",
+    params.text,
+    "",
+    "---",
+    `**Submitted via:** Slack #second-brain`,
+    params.submitterUserId ? `**Slack user:** <@${params.submitterUserId}>` : "",
+    params.slackMessageLink ? `**Slack message:** ${params.slackMessageLink}` : "",
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
 }
 
 async function getPermalink(client: App["client"], channel: string, ts: string): Promise<string> {

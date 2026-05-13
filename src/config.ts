@@ -22,5 +22,18 @@ export const config = {
     companyPrefix: process.env["PAPERCLIP_COMPANY_PREFIX"] ?? "GEM",
     appBaseUrl: process.env["APP_BASE_URL"] ?? "https://paperclip.ing",
   },
+  github: {
+    token: required("GITHUB_TOKEN"),
+    owner: required("GITHUB_REPO_OWNER"),
+    repo: process.env["GITHUB_REPO_NAME"] ?? "gsh-second-brain",
+    defaultLabels: (process.env["GITHUB_DEFAULT_LABELS"] ?? "second-brain,idea")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    defaultAssignees: (process.env["GITHUB_DEFAULT_ASSIGNEES"] ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  },
   port: parseInt(process.env["PORT"] ?? "3000", 10),
 };

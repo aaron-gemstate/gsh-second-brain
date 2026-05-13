@@ -32,6 +32,8 @@ export class PaperclipClient {
     slackMessageLink: string;
     slackMessageTs: string;
     slackChannelId: string;
+    githubIssueNumber?: number;
+    githubIssueUrl?: string;
   }): Promise<PaperclipIssue> {
     const description = [
       params.body,
@@ -39,6 +41,13 @@ export class PaperclipClient {
       "---",
       `**Slack message:** ${params.slackMessageLink}`,
       params.submitterUserId ? `**Submitted by:** <@${params.submitterUserId}>` : "",
+      params.githubIssueUrl
+        ? `**GitHub issue:** [#${params.githubIssueNumber}](${params.githubIssueUrl})`
+        : "",
+      // Machine-readable marker used to retrieve the GitHub issue on edits/deletions
+      params.githubIssueNumber != null
+        ? `<!-- github-issue:${params.githubIssueNumber} -->`
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -57,32 +66,66 @@ export class PaperclipClient {
     return response.data as PaperclipIssue;
   }
 
-  async closeIssueByOrigin(slackMessageTs: string, slackChannelId: string, reason: string): Promise<void> {
+  /** Extract GitHub issue number embedded by createIdeaIssue. Returns null if not found. */
+  extractGitHubIssueNumber(description: string): number | null {
+    const match = description.match(/<!--\s*github-issue:(\d+)\s*-->/);
+    return match ? parseInt(match[1], 10) : null;
+  }
+
+  async getIssueByOrigin(slackMessageTs: string, slackChannelId: string): Promise<PaperclipIssue & { description?: string } | null> {
     const fingerprint = `slack:${slackChannelId}:${slackMessageTs}`;
     const search = await this.http.get(
       `/api/companies/${this.companyId}/issues?originFingerprint=${encodeURIComponent(fingerprint)}&projectId=${this.projectId}`
     );
-    const issues: PaperclipIssue[] = search.data?.items ?? search.data ?? [];
+    const issues = search.data?.items ?? search.data ?? [];
+    return issues[0] ?? null;
+  }
+
+  async closeIssueByOrigin(
+    slackMessageTs: string,
+    slackChannelId: string,
+    reason: string
+  ): Promise<{ githubIssueNumber: number | null }> {
+    const fingerprint = `slack:${slackChannelId}:${slackMessageTs}`;
+    const search = await this.http.get(
+      `/api/companies/${this.companyId}/issues?originFingerprint=${encodeURIComponent(fingerprint)}&projectId=${this.projectId}`
+    );
+    const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
+    let githubIssueNumber: number | null = null;
     for (const issue of issues) {
+      if (issue.description && githubIssueNumber == null) {
+        githubIssueNumber = this.extractGitHubIssueNumber(issue.description);
+      }
       await this.http.patch(`/api/issues/${issue.id}`, {
         status: "cancelled",
         comment: reason,
       });
     }
+    return { githubIssueNumber };
   }
 
-  async updateIssueTitleByOrigin(slackMessageTs: string, slackChannelId: string, newTitle: string, newBody: string): Promise<void> {
+  async updateIssueTitleByOrigin(
+    slackMessageTs: string,
+    slackChannelId: string,
+    newTitle: string,
+    newBody: string
+  ): Promise<{ githubIssueNumber: number | null }> {
     const fingerprint = `slack:${slackChannelId}:${slackMessageTs}`;
     const search = await this.http.get(
       `/api/companies/${this.companyId}/issues?originFingerprint=${encodeURIComponent(fingerprint)}&projectId=${this.projectId}`
     );
-    const issues: PaperclipIssue[] = search.data?.items ?? search.data ?? [];
+    const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
+    let githubIssueNumber: number | null = null;
     for (const issue of issues) {
+      if (issue.description && githubIssueNumber == null) {
+        githubIssueNumber = this.extractGitHubIssueNumber(issue.description);
+      }
       await this.http.patch(`/api/issues/${issue.id}`, {
         title: newTitle,
         description: newBody,
       });
     }
+    return { githubIssueNumber };
   }
 
   issueUrl(companyPrefix: string, identifier: string): string {
