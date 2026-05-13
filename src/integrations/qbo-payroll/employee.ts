@@ -83,29 +83,11 @@ export async function activateEmployee(
   return updateEmployee(client, employeeRef, { Active: true }, "employee-activate");
 }
 
-/** Build the pay-type update payload for the sparse update call.
- *  QBO REST API represents pay in BillRate for basic rate tracking.
- *  Full payroll wage item assignment requires QBO Payroll API (Payroll tier). */
+/** Fallback pay update using BillRate — informational only, not a payroll wage item.
+ *  Used when QBO Payroll tier is not yet enabled. */
 export function buildPayUpdate(
   payType: "salary" | "hourly",
   payRate: number
 ): Record<string, unknown> {
-  return {
-    BillRate: payRate,
-    // PayPeriod is informational at this layer; payroll wage items require Payroll API
-    MetaData: {
-      LastUpdatedTime: new Date().toISOString(),
-    },
-  };
-}
-
-/** Build the W-4 filing status update payload.
- *  Full W-4 withholding configuration requires QBO Payroll API (Payroll tier).
- *  This sets what is available on the base Employee object. */
-export function buildW4Update(filingStatus: string, additionalWithholding: number): Record<string, unknown> {
-  // QBO REST API Employee object does not expose W-4 fields directly —
-  // these are managed via QBO Payroll API's employee tax settings endpoint.
-  // This payload is a no-op on the base Employee but is included as a hook
-  // for when Payroll tier is confirmed (see payroll.ts).
-  return {};
+  return { BillRate: payRate };
 }

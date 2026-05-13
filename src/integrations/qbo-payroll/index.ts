@@ -33,19 +33,20 @@ export class QBOPayrollIntegration {
       departmentId: dept.id,
     });
 
-    // Step 4: Set pay type + rate (requires Payroll tier)
+    // Step 4: Set pay type + rate
+    // Payroll tier path: PrimaryEarning via QBO Employee update (preferred)
+    // Fallback: BillRate on base Employee (always available, informational only)
     try {
-      await setPayRate(this.client, employeeRef.id, record.payType, record.payRate);
-      // Refresh syncToken after potential pay-rate update
-      employeeRef = await updateEmployee(
-        this.client,
-        employeeRef,
-        buildPayUpdate(record.payType, record.payRate),
-        "pay-rate-base"
-      );
+      employeeRef = await setPayRate(this.client, employeeRef, record.payType, record.payRate);
     } catch (err) {
       if (err instanceof QBOPayrollError && err.step === "pay-rate") {
-        console.warn(`[qbo-payroll] ${err.message} — BillRate set on base Employee instead.`);
+        console.warn(`[qbo-payroll] ${err.message} — BillRate set on base Employee as fallback.`);
+        employeeRef = await updateEmployee(
+          this.client,
+          employeeRef,
+          buildPayUpdate(record.payType, record.payRate),
+          "pay-rate-base"
+        );
       } else {
         throw err;
       }
@@ -53,9 +54,9 @@ export class QBOPayrollIntegration {
 
     // Step 5: W-4 filing status (requires Payroll tier)
     try {
-      await setFilingStatus(
+      employeeRef = await setFilingStatus(
         this.client,
-        employeeRef.id,
+        employeeRef,
         record.w4Data.filingStatus,
         record.w4Data.additionalWithholding
       );
@@ -72,7 +73,7 @@ export class QBOPayrollIntegration {
     try {
       directDepositConfigured = await setupDirectDeposit(
         this.client,
-        employeeRef.id,
+        employeeRef,
         record.bankInfo
       );
     } catch (err) {
