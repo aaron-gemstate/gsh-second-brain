@@ -132,6 +132,23 @@ export class PaperclipClient {
     return { githubIssueNumber };
   }
 
+  async getProjectIssues(statuses: string[]): Promise<Array<PaperclipIssue & { description?: string; assigneeAgentId?: string | null }>> {
+    const resp = await this.http.get(
+      `/api/companies/${this.companyId}/issues?projectId=${this.projectId}&status=${statuses.join(",")}&limit=100`
+    );
+    return resp.data?.items ?? resp.data ?? [];
+  }
+
+  async getIssueDocument(issueId: string, key: string): Promise<{ body: string; revisionId: string; title?: string } | null> {
+    try {
+      const resp = await this.http.get(`/api/issues/${issueId}/documents/${key}`);
+      return resp.data ?? null;
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+      throw err;
+    }
+  }
+
   issueUrl(companyPrefix: string, identifier: string): string {
     return `/${companyPrefix}/issues/${identifier}`;
   }

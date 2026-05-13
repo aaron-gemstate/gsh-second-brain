@@ -62,4 +62,22 @@ export class GitHubClient {
       state_reason: "not_planned",
     });
   }
+
+  async addComment(issueNumber: number, body: string): Promise<void> {
+    await this.http.post(`/repos/${this.owner}/${this.repo}/issues/${issueNumber}/comments`, { body });
+  }
+
+  /** Returns true if any existing comment on the issue contains the given marker string. */
+  async hasComment(issueNumber: number, marker: string): Promise<boolean> {
+    let page = 1;
+    while (true) {
+      const { data } = await this.http.get(
+        `/repos/${this.owner}/${this.repo}/issues/${issueNumber}/comments?per_page=100&page=${page}`
+      );
+      if (!Array.isArray(data) || data.length === 0) return false;
+      if (data.some((c: { body?: string }) => c.body?.includes(marker))) return true;
+      if (data.length < 100) return false;
+      page++;
+    }
+  }
 }

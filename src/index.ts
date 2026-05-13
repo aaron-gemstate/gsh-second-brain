@@ -3,6 +3,7 @@ import { config } from "./config";
 import { PaperclipClient } from "./paperclip";
 import { GitHubClient } from "./github";
 import { registerIngestHandlers } from "./ingest";
+import { syncContextToGitHub } from "./context-sync";
 
 const isSocketMode = Boolean(config.slack.appToken);
 
@@ -33,10 +34,33 @@ const github = new GitHubClient({
 
 registerIngestHandlers(app, paperclip, github);
 
+const SYNC_INTERVAL_MS = parseInt(process.env["CONTEXT_SYNC_INTERVAL_MS"] ?? String(10 * 60 * 1000), 10);
+
+const syncLogger = {
+  info: (msg: string) => console.log(msg),
+  warn: (msg: string, err?: unknown) => console.warn(msg, err ?? ""),
+  error: (msg: string, err?: unknown) => console.error(msg, err ?? ""),
+};
+
+function runContextSync() {
+  syncContextToGitHub(
+    paperclip,
+    github,
+    config.paperclip.companyPrefix,
+    config.paperclip.appBaseUrl,
+    syncLogger
+  ).catch((err) => console.error("context-sync: unhandled error", err));
+}
+
 (async () => {
   await app.start();
   console.log(`⚡ 2nd Brain bot running on port ${config.port} (${isSocketMode ? "Socket Mode" : "HTTP"})`);
   console.log(`   Watching channel: ${config.slack.secondBrainChannelId}`);
   console.log(`   Paperclip project: ${config.paperclip.projectId}`);
   console.log(`   GitHub database: ${config.github.owner}/${config.github.repo}`);
+
+  // Sync Paperclip plans to GitHub on startup and then every SYNC_INTERVAL_MS
+  runContextSync();
+  setInterval(runContextSync, SYNC_INTERVAL_MS);
+  console.log(`   Context sync: every ${SYNC_INTERVAL_MS / 1000}s`);
 })();
