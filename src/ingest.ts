@@ -9,8 +9,8 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
     const msg = message as GenericMessageEvent;
 
     if (msg.channel !== config.slack.secondBrainChannelId) return;
-    // Ignore bot messages and thread replies
-    if (msg.subtype || msg.thread_ts) return;
+    // Ignore bot messages (Slack omits subtype for bot messages, so also check bot_id) and thread replies
+    if (msg.subtype || (msg as unknown as Record<string, unknown>).bot_id || msg.thread_ts) return;
 
     const text = msg.text ?? "";
     if (!text.trim()) return;
