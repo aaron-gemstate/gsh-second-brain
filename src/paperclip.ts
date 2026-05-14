@@ -141,14 +141,15 @@ export class PaperclipClient {
   }
 
   async getIssueByOrigin(slackMessageTs: string, slackChannelId: string): Promise<PaperclipIssue & { description?: string } | null> {
-    const fingerprint = `slack:${slackChannelId}:${slackMessageTs}`;
+    // originFingerprint filter is ignored by the API (returns all issues) — search by
+    // description content instead and validate both slack markers are present.
     const search = await this.http.get(
-      `/api/companies/${this.companyId}/issues?originFingerprint=${encodeURIComponent(fingerprint)}&projectId=${this.projectId}`
+      `/api/companies/${this.companyId}/issues?q=${encodeURIComponent(slackMessageTs)}&projectId=${this.projectId}&limit=50`
     );
     const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
-    // Prefer active issues — skip cancelled/done so replies don't land on dead issues
-    const active = issues.find(i => i.status !== "cancelled" && i.status !== "done");
-    return active ?? issues[0] ?? null;
+    const matching = issues.filter((i) => this.descriptionMatchesOrigin(i.description, slackMessageTs, slackChannelId));
+    const active = matching.find((i) => i.status !== "cancelled" && i.status !== "done");
+    return active ?? matching[0] ?? null;
   }
 
   async closeIssueByOrigin(
