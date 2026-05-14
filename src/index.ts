@@ -4,6 +4,7 @@ import { PaperclipClient } from "./paperclip";
 import { GitHubClient } from "./github";
 import { registerIngestHandlers } from "./ingest";
 import { syncContextToGitHub } from "./context-sync";
+import { relayAgentCommentsToSlack } from "./slack-relay";
 
 const isSocketMode = Boolean(config.slack.appToken);
 
@@ -35,6 +36,7 @@ const github = new GitHubClient({
 registerIngestHandlers(app, paperclip, github);
 
 const SYNC_INTERVAL_MS = parseInt(process.env["CONTEXT_SYNC_INTERVAL_MS"] ?? String(10 * 60 * 1000), 10);
+const RELAY_INTERVAL_MS = parseInt(process.env["SLACK_RELAY_INTERVAL_MS"] ?? String(60 * 1000), 10);
 
 const syncLogger = {
   info: (msg: string) => console.log(msg),
@@ -52,6 +54,12 @@ function runContextSync() {
   ).catch((err) => console.error("context-sync: unhandled error", err));
 }
 
+function runSlackRelay() {
+  relayAgentCommentsToSlack(paperclip, app.client, syncLogger).catch(
+    (err) => console.error("slack-relay: unhandled error", err)
+  );
+}
+
 (async () => {
   await app.start();
   console.log(`⚡ 2nd Brain bot running on port ${config.port} (${isSocketMode ? "Socket Mode" : "HTTP"})`);
@@ -63,4 +71,9 @@ function runContextSync() {
   runContextSync();
   setInterval(runContextSync, SYNC_INTERVAL_MS);
   console.log(`   Context sync: every ${SYNC_INTERVAL_MS / 1000}s`);
+
+  // Relay agent comments back to Slack threads on startup and then every RELAY_INTERVAL_MS
+  runSlackRelay();
+  setInterval(runSlackRelay, RELAY_INTERVAL_MS);
+  console.log(`   Slack relay: every ${RELAY_INTERVAL_MS / 1000}s`);
 })();

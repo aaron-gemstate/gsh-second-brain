@@ -125,6 +125,41 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
     }
   });
 
+  // Thread replies in monitored channels → route back to Paperclip issue as a comment
+  app.message(async ({ message, logger }) => {
+    const msg = message as GenericMessageEvent;
+
+    // Must be a thread reply (thread_ts set, and ts !== thread_ts)
+    if (!msg.thread_ts || msg.ts === msg.thread_ts) return;
+    // Ignore bot messages
+    if (msg.subtype || (msg as unknown as Record<string, unknown>).bot_id) return;
+
+    const monitoredChannels = [
+      config.slack.secondBrainChannelId,
+      ...(config.slack.askHelgiChannelId ? [config.slack.askHelgiChannelId] : []),
+    ];
+    if (!monitoredChannels.includes(msg.channel)) return;
+
+    const text = msg.text ?? "";
+    if (!text.trim()) return;
+
+    logger.info(`Thread reply from ${msg.user} in ${msg.channel}/${msg.thread_ts}: "${text.slice(0, 80)}"`);
+
+    const issue = await paperclip.getIssueByOrigin(msg.thread_ts, msg.channel);
+    if (!issue) {
+      logger.info(`No Paperclip issue found for thread ${msg.thread_ts} — ignoring reply`);
+      return;
+    }
+
+    const commentBody = `**Slack thread reply from <@${msg.user}>:**\n\n${text}`;
+    try {
+      await paperclip.postComment(issue.id, commentBody);
+      logger.info(`Routed Slack reply to Paperclip issue ${issue.identifier}`);
+    } catch (err) {
+      logger.error(`Failed to post comment on ${issue.identifier}`, err);
+    }
+  });
+
   // Message deleted → close GitHub issue + cancel Paperclip issue
   app.event("message", async ({ event, logger }) => {
     const ev = event as unknown as { subtype?: string; deleted_ts?: string; channel?: string };

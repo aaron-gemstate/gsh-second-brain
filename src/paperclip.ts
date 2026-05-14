@@ -6,6 +6,16 @@ export interface PaperclipIssue {
   title: string;
   status: string;
   issueNumber: number;
+  assigneeAgentId?: string | null;
+  executionAgentNameKey?: string | null;
+}
+
+export interface PaperclipComment {
+  id: string;
+  body: string;
+  authorAgentId?: string | null;
+  authorUserId?: string | null;
+  createdAt: string;
 }
 
 export class PaperclipClient {
@@ -186,6 +196,35 @@ export class PaperclipClient {
       if (axios.isAxiosError(err) && err.response?.status === 404) return null;
       throw err;
     }
+  }
+
+  async postComment(issueId: string, body: string): Promise<void> {
+    await this.http.post(`/api/issues/${issueId}/comments`, { body });
+  }
+
+  async getIssueComments(issueId: string, afterCommentId?: string): Promise<PaperclipComment[]> {
+    const url = afterCommentId
+      ? `/api/issues/${issueId}/comments?after=${encodeURIComponent(afterCommentId)}&order=asc`
+      : `/api/issues/${issueId}/comments?order=asc`;
+    const resp = await this.http.get(url);
+    return resp.data?.items ?? resp.data ?? [];
+  }
+
+  async getSlackOriginIssues(): Promise<Array<PaperclipIssue & { description?: string }>> {
+    const resp = await this.http.get(
+      `/api/companies/${this.companyId}/issues?projectId=${this.projectId}&originKind=slack&status=todo,in_progress,in_review,blocked,done&limit=100`
+    );
+    return resp.data?.items ?? resp.data ?? [];
+  }
+
+  extractSlackChannelId(description: string): string | null {
+    const match = description.match(/<!--\s*slack-channel-id:([^\s>]+)\s*-->/);
+    return match ? match[1] : null;
+  }
+
+  extractSlackMessageTs(description: string): string | null {
+    const match = description.match(/<!--\s*slack-message-ts:([^\s>]+)\s*-->/);
+    return match ? match[1] : null;
   }
 
   issueUrl(companyPrefix: string, identifier: string): string {
