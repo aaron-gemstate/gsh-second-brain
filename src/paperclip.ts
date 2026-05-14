@@ -119,6 +119,21 @@ export class PaperclipClient {
     return response.data as PaperclipIssue;
   }
 
+  /** Returns true only if the description contains both the expected Slack ts and channel markers.
+   *  Used as a client-side guard in close/update-by-origin to prevent modifying issues
+   *  that the server returned despite not matching the originFingerprint filter. */
+  private descriptionMatchesOrigin(
+    description: string | undefined,
+    slackMessageTs: string,
+    slackChannelId: string
+  ): boolean {
+    if (!description) return false;
+    return (
+      description.includes(`<!-- slack-message-ts:${slackMessageTs} -->`) &&
+      description.includes(`<!-- slack-channel-id:${slackChannelId} -->`)
+    );
+  }
+
   /** Extract GitHub issue number embedded by createIdeaIssue. Returns null if not found. */
   extractGitHubIssueNumber(description: string): number | null {
     const match = description.match(/<!--\s*github-issue:(\d+)\s*-->/);
@@ -146,6 +161,11 @@ export class PaperclipClient {
     const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
     let githubIssueNumber: number | null = null;
     for (const issue of issues) {
+      // Guard: verify the issue actually belongs to this Slack message before modifying.
+      // Protects against server-side filter failures returning unrelated issues.
+      if (!this.descriptionMatchesOrigin(issue.description, slackMessageTs, slackChannelId)) {
+        continue;
+      }
       if (issue.description && githubIssueNumber == null) {
         githubIssueNumber = this.extractGitHubIssueNumber(issue.description);
       }
@@ -170,6 +190,10 @@ export class PaperclipClient {
     const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
     let githubIssueNumber: number | null = null;
     for (const issue of issues) {
+      // Guard: verify the issue actually belongs to this Slack message before modifying.
+      if (!this.descriptionMatchesOrigin(issue.description, slackMessageTs, slackChannelId)) {
+        continue;
+      }
       if (issue.description && githubIssueNumber == null) {
         githubIssueNumber = this.extractGitHubIssueNumber(issue.description);
       }
