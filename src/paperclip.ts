@@ -248,10 +248,14 @@ export class PaperclipClient {
   }
 
   async getSlackOriginIssues(): Promise<Array<PaperclipIssue & { description?: string }>> {
+    // Search by description content — originKind=slack is not reliably set on manually-created issues
     const resp = await this.http.get(
-      `/api/companies/${this.companyId}/issues?projectId=${this.projectId}&originKind=slack&status=todo,in_progress,in_review,blocked,done&limit=100`
+      `/api/companies/${this.companyId}/issues?projectId=${this.projectId}&q=slack-channel-id&status=todo,in_progress,in_review,blocked&limit=100`
     );
-    return resp.data?.items ?? resp.data ?? [];
+    const issues: Array<PaperclipIssue & { description?: string }> = resp.data?.items ?? resp.data ?? [];
+    return issues.filter(
+      (i) => i.description && this.extractSlackChannelId(i.description) && this.extractSlackMessageTs(i.description)
+    );
   }
 
   extractSlackChannelId(description: string): string | null {

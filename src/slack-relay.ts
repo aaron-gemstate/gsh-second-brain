@@ -8,58 +8,77 @@ export interface RelayLogger {
 }
 
 // Tracks the last-relayed comment ID per issue to avoid double-posting.
-// Issues first seen in a run have all existing comments marked as "seen" without relaying
-// (so we don't replay history on restart).
 const lastRelayedCommentId = new Map<string, string | null>();
+
+// Runtime registry: populated by the ingest handler whenever a thread reply is
+// routed to a Paperclip issue. Allows relaying for issues that don't have Slack
+// metadata embedded in their description (e.g. manually-created issues).
+const threadRegistry = new Map<string, { channelId: string; threadTs: string }>();
+
+export function registerSlackThread(issueId: string, channelId: string, threadTs: string): void {
+  threadRegistry.set(issueId, { channelId, threadTs });
+}
 
 // Comments injected by the ingest bot from Slack should not be echoed back.
 const INGEST_COMMENT_PREFIX = "**Slack thread reply from";
 
 /**
- * Poll Paperclip for new agent comments on Slack-origin issues and relay them
- * to the originating Slack thread. Call this on a short interval (e.g. 60 s).
+ * Poll Paperclip for new agent comments and relay them back to the originating
+ * Slack thread. Sources: description-embedded markers (ingest-bot-created issues)
+ * + the runtime registry (any issue that received a thread reply this session).
  */
 export async function relayAgentCommentsToSlack(
   paperclip: PaperclipClient,
   slack: WebClient,
   logger: RelayLogger
 ): Promise<void> {
-  let issues: Awaited<ReturnType<typeof paperclip.getSlackOriginIssues>>;
+  // Build the candidate list: description-based + registry-based, deduplicated by id
+  const candidates = new Map<string, { id: string; identifier: string; channelId: string; threadTs: string }>();
+
+  // 1. Description-embedded markers (ingest-bot-created issues)
   try {
-    issues = await paperclip.getSlackOriginIssues();
+    const descIssues = await paperclip.getSlackOriginIssues();
+    for (const issue of descIssues) {
+      if (!issue.description) continue;
+      const channelId = paperclip.extractSlackChannelId(issue.description);
+      const threadTs = paperclip.extractSlackMessageTs(issue.description);
+      if (channelId && threadTs) {
+        candidates.set(issue.id, { id: issue.id, identifier: issue.identifier, channelId, threadTs });
+      }
+    }
   } catch (err) {
     logger.error("slack-relay: failed to fetch Slack-origin issues", err);
-    return;
   }
 
-  for (const issue of issues) {
-    if (!issue.description) continue;
+  // 2. Runtime registry (covers manually-created issues that received thread replies)
+  for (const [issueId, { channelId, threadTs }] of threadRegistry) {
+    if (!candidates.has(issueId)) {
+      candidates.set(issueId, { id: issueId, identifier: issueId, channelId, threadTs });
+    }
+  }
 
-    const channelId = paperclip.extractSlackChannelId(issue.description);
-    const threadTs = paperclip.extractSlackMessageTs(issue.description);
-    if (!channelId || !threadTs) continue;
-
-    const knownLastId = lastRelayedCommentId.get(issue.id);
+  for (const { id, identifier, channelId, threadTs } of candidates.values()) {
+    const knownLastId = lastRelayedCommentId.get(id);
 
     try {
       if (knownLastId === undefined) {
-        // First time we see this issue: snapshot existing comments without relaying.
-        const existing = await paperclip.getIssueComments(issue.id);
+        // First time seeing this issue: snapshot without relaying to avoid history spam.
+        const existing = await paperclip.getIssueComments(id);
         const last = existing[existing.length - 1];
-        lastRelayedCommentId.set(issue.id, last?.id ?? null);
+        lastRelayedCommentId.set(id, last?.id ?? null);
         continue;
       }
 
       const newComments = knownLastId
-        ? await paperclip.getIssueComments(issue.id, knownLastId)
-        : await paperclip.getIssueComments(issue.id);
+        ? await paperclip.getIssueComments(id, knownLastId)
+        : await paperclip.getIssueComments(id);
 
       for (const comment of newComments) {
-        lastRelayedCommentId.set(issue.id, comment.id);
+        lastRelayedCommentId.set(id, comment.id);
 
-        // Skip comments that the ingest bot itself posted from Slack.
+        // Skip comments the ingest bot injected from Slack (avoid echo loop).
         if (comment.body.startsWith(INGEST_COMMENT_PREFIX)) continue;
-        // Only relay comments authored by an agent (not anonymous/system).
+        // Only relay agent-authored comments.
         if (!comment.authorAgentId) continue;
 
         try {
@@ -69,13 +88,13 @@ export async function relayAgentCommentsToSlack(
             text: comment.body,
             mrkdwn: true,
           });
-          logger.info(`slack-relay: relayed comment ${comment.id} for ${issue.identifier} → ${channelId}/${threadTs}`);
+          logger.info(`slack-relay: relayed comment ${comment.id} for ${identifier} → ${channelId}/${threadTs}`);
         } catch (err) {
-          logger.warn(`slack-relay: failed to post to Slack for ${issue.identifier}`, err);
+          logger.warn(`slack-relay: failed to post to Slack for ${identifier}`, err);
         }
       }
     } catch (err) {
-      logger.warn(`slack-relay: skipped issue ${issue.identifier}`, err);
+      logger.warn(`slack-relay: skipped issue ${identifier}`, err);
     }
   }
 }

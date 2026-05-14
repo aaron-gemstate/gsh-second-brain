@@ -2,6 +2,7 @@ import { App, GenericMessageEvent } from "@slack/bolt";
 import { config } from "./config";
 import { PaperclipClient } from "./paperclip";
 import { GitHubClient } from "./github";
+import { registerSlackThread } from "./slack-relay";
 
 export function registerIngestHandlers(app: App, paperclip: PaperclipClient, github: GitHubClient): void {
   // @helgi mentions in #ask-helgi → create Paperclip issue assigned directly to Helgi
@@ -154,6 +155,8 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
     const commentBody = `**Slack thread reply from <@${msg.user}>:**\n\n${text}`;
     try {
       await paperclip.postComment(issue.id, commentBody);
+      // Register so the relay can post agent responses back to this thread
+      registerSlackThread(issue.id, msg.channel, msg.thread_ts);
       logger.info(`Routed Slack reply to Paperclip issue ${issue.identifier}`);
     } catch (err) {
       logger.error(`Failed to post comment on ${issue.identifier}`, err);
