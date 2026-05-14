@@ -4,6 +4,66 @@ import { PaperclipClient } from "./paperclip";
 import { GitHubClient } from "./github";
 
 export function registerIngestHandlers(app: App, paperclip: PaperclipClient, github: GitHubClient): void {
+  // @helgi mentions in #ask-helgi → create Paperclip issue assigned directly to Helgi
+  const askHelgiChannelId = config.slack.askHelgiChannelId;
+  const helgiUserId = config.slack.helgiUserId;
+  if (askHelgiChannelId && helgiUserId) {
+    app.message(async ({ message, client, logger }) => {
+      const msg = message as GenericMessageEvent;
+      if (msg.channel !== askHelgiChannelId) return;
+      if (msg.subtype || (msg as unknown as Record<string, unknown>).bot_id || msg.thread_ts) return;
+
+      const text = msg.text ?? "";
+      if (!text.includes(`<@${helgiUserId}>`)) return;
+
+      logger.info(`@helgi mention in #ask-helgi from ${msg.user}: "${text.slice(0, 80)}"`);
+
+      // Gather last 10 messages for context per Aaron's spec
+      let context = "";
+      try {
+        const history = await client.conversations.history({ channel: askHelgiChannelId, limit: 10 });
+        context = (history.messages ?? [])
+          .filter((m) => !m.bot_id && m.text)
+          .reverse()
+          .map((m) => `<@${m.user}>: ${m.text}`)
+          .join("\n");
+      } catch (err) {
+        logger.warn("Could not fetch #ask-helgi history for context", err);
+      }
+
+      const title = deriveTitle(text.replace(/<@[^>]+>/g, "").trim()) || "Question for Helgi";
+      const permalink = await getPermalink(client, msg.channel, msg.ts);
+
+      try {
+        const issue = await paperclip.createDirectIssue({
+          title,
+          body: text,
+          submitterUserId: msg.user,
+          slackMessageLink: permalink,
+          slackMessageTs: msg.ts,
+          slackChannelId: msg.channel,
+          assigneeAgentId: config.helgiAgentId,
+          context,
+        });
+
+        const issueUrl = `${config.paperclip.appBaseUrl}${paperclip.issueUrl(config.paperclip.companyPrefix, issue.identifier)}`;
+        await client.chat.postMessage({
+          channel: msg.channel,
+          thread_ts: msg.ts,
+          text: `Got it — I'll get back to you shortly (<${issueUrl}|${issue.identifier}>).`,
+        });
+      } catch (err) {
+        logger.error("Failed to create Paperclip issue for #ask-helgi mention", err);
+        await client.chat.postMessage({
+          channel: msg.channel,
+          thread_ts: msg.ts,
+          text: "Something went wrong capturing your message. Please try again or contact an admin.",
+        });
+      }
+    });
+  }
+
+
   // New message in #second-brain → log to GitHub, then create Paperclip issue
   app.message(async ({ message, client, logger }) => {
     const msg = message as GenericMessageEvent;

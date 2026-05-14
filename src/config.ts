@@ -13,7 +13,10 @@ export const config = {
     signingSecret: required("SLACK_SIGNING_SECRET"),
     appToken: process.env["SLACK_APP_TOKEN"],
     secondBrainChannelId: required("SLACK_SECOND_BRAIN_CHANNEL_ID"),
+    askHelgiChannelId: process.env["SLACK_ASK_HELGI_CHANNEL_ID"],
+    helgiUserId: process.env["SLACK_HELGI_USER_ID"],
   },
+  helgiAgentId: process.env["PAPERCLIP_HELGI_AGENT_ID"],
   paperclip: {
     apiUrl: required("PAPERCLIP_API_URL"),
     apiKey: required("PAPERCLIP_API_KEY"),

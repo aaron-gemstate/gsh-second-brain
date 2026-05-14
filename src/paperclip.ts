@@ -70,6 +70,45 @@ export class PaperclipClient {
     return response.data as PaperclipIssue;
   }
 
+  async createDirectIssue(params: {
+    title: string;
+    body: string;
+    submitterUserId?: string;
+    slackMessageLink: string;
+    slackMessageTs: string;
+    slackChannelId: string;
+    assigneeAgentId?: string;
+    context?: string;
+  }): Promise<PaperclipIssue> {
+    const description = [
+      params.body,
+      "",
+      params.context ? `**Recent channel context:**\n${params.context}` : "",
+      "",
+      "---",
+      `**Slack message:** ${params.slackMessageLink}`,
+      params.submitterUserId ? `**Submitted by:** <@${params.submitterUserId}>` : "",
+      `<!-- slack-channel-id:${params.slackChannelId} -->`,
+      `<!-- slack-message-ts:${params.slackMessageTs} -->`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const response = await this.http.post(`/api/companies/${this.companyId}/issues`, {
+      title: params.title,
+      description,
+      status: "todo",
+      priority: "medium",
+      projectId: this.projectId,
+      originKind: "slack",
+      originId: params.slackMessageTs,
+      originFingerprint: `slack:${params.slackChannelId}:${params.slackMessageTs}`,
+      ...(params.assigneeAgentId ? { assigneeAgentId: params.assigneeAgentId } : {}),
+    });
+
+    return response.data as PaperclipIssue;
+  }
+
   /** Extract GitHub issue number embedded by createIdeaIssue. Returns null if not found. */
   extractGitHubIssueNumber(description: string): number | null {
     const match = description.match(/<!--\s*github-issue:(\d+)\s*-->/);
