@@ -145,8 +145,10 @@ export class PaperclipClient {
     const search = await this.http.get(
       `/api/companies/${this.companyId}/issues?originFingerprint=${encodeURIComponent(fingerprint)}&projectId=${this.projectId}`
     );
-    const issues = search.data?.items ?? search.data ?? [];
-    return issues[0] ?? null;
+    const issues: Array<PaperclipIssue & { description?: string }> = search.data?.items ?? search.data ?? [];
+    // Prefer active issues — skip cancelled/done so replies don't land on dead issues
+    const active = issues.find(i => i.status !== "cancelled" && i.status !== "done");
+    return active ?? issues[0] ?? null;
   }
 
   async closeIssueByOrigin(
