@@ -240,11 +240,12 @@ export class PaperclipClient {
   }
 
   async getIssueComments(issueId: string, afterCommentId?: string): Promise<PaperclipComment[]> {
-    const url = afterCommentId
-      ? `/api/issues/${issueId}/comments?after=${encodeURIComponent(afterCommentId)}&order=asc`
-      : `/api/issues/${issueId}/comments?order=asc`;
-    const resp = await this.http.get(url);
-    return resp.data?.items ?? resp.data ?? [];
+    const resp = await this.http.get(`/api/issues/${issueId}/comments`);
+    const all: PaperclipComment[] = resp.data?.items ?? resp.data ?? [];
+    if (!afterCommentId) return all;
+    // Server-side ?after= pagination is unsupported — filter client-side instead.
+    const idx = all.findIndex((c) => c.id === afterCommentId);
+    return idx === -1 ? all : all.slice(idx + 1);
   }
 
   async getSlackOriginIssues(): Promise<Array<PaperclipIssue & { description?: string }>> {
