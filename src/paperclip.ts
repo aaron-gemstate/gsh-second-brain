@@ -230,13 +230,18 @@ export class PaperclipClient {
     try {
       await attempt();
     } catch (err) {
-      // 409 means the issue is currently checked out by another run — retry once after a delay
-      if (axios.isAxiosError(err) && err.response?.status === 409) {
-        await new Promise((resolve) => setTimeout(resolve, 12000));
-        await attempt();
-      } else {
-        throw err;
+      if (!axios.isAxiosError(err) || err.response?.status !== 409) throw err;
+      // Issue is checked out by an active run — retry with backoff (triage can take 30-60s)
+      for (const delay of [15000, 30000, 60000]) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        try {
+          await attempt();
+          return;
+        } catch (retryErr) {
+          if (!axios.isAxiosError(retryErr) || retryErr.response?.status !== 409) throw retryErr;
+        }
       }
+      throw new Error(`postComment: issue ${issueId} still locked after retries`);
     }
   }
 
