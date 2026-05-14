@@ -225,7 +225,18 @@ export class PaperclipClient {
   }
 
   async postComment(issueId: string, body: string): Promise<void> {
-    await this.http.post(`/api/issues/${issueId}/comments`, { body });
+    const attempt = () => this.http.post(`/api/issues/${issueId}/comments`, { body });
+    try {
+      await attempt();
+    } catch (err) {
+      // 409 means the issue is currently checked out by another run — retry once after a delay
+      if (axios.isAxiosError(err) && err.response?.status === 409) {
+        await new Promise((resolve) => setTimeout(resolve, 12000));
+        await attempt();
+      } else {
+        throw err;
+      }
+    }
   }
 
   async getIssueComments(issueId: string, afterCommentId?: string): Promise<PaperclipComment[]> {
