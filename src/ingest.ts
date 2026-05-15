@@ -127,7 +127,7 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
   });
 
   // Thread replies in monitored channels → route back to Paperclip issue as a comment
-  app.message(async ({ message, logger }) => {
+  app.message(async ({ message, client, logger }) => {
     const msg = message as GenericMessageEvent;
 
     // Must be a thread reply (thread_ts set, and ts !== thread_ts)
@@ -158,6 +158,12 @@ export function registerIngestHandlers(app: App, paperclip: PaperclipClient, git
       // Register so the relay can post agent responses back to this thread
       registerSlackThread(issue.id, msg.channel, msg.thread_ts);
       logger.info(`Routed Slack reply to Paperclip issue ${issue.identifier}`);
+      // Acknowledge receipt so user knows the agent has seen their reply
+      try {
+        await client.reactions.add({ channel: msg.channel, timestamp: msg.ts, name: "thumbsup" });
+      } catch (reactErr) {
+        logger.warn("Failed to add 👍 reaction to thread reply", reactErr);
+      }
     } catch (err) {
       logger.error(`Failed to post comment on ${issue.identifier}`, err);
     }
